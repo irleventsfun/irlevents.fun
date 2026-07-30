@@ -1,0 +1,41 @@
+name: Deploy The Overlap to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'overlap/**'
+      - '.github/workflows/deploy-overlap-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload The Overlap site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: './overlap'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
