@@ -118,6 +118,55 @@ create table if not exists public.creator_methods (
   created_at timestamptz not null default now()
 );
 
+-- Subscription / earned-access state. Billing remains external; this table is the app-facing entitlement ledger.
+create table if not exists public.entitlements (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_tier text not null check(product_tier in ('free','plus','together')),
+  source text not null check(source in ('default','paid','referral','admin','promo')),
+  starts_at timestamptz not null default now(),
+  ends_at timestamptz,
+  external_reference text,
+  created_at timestamptz not null default now()
+);
+
+-- One stable public referral/comparison identity per profile. The raw token is shown only to the owner/client;
+-- only its hash is persisted. QR codes resolve through a server endpoint, never directly against this table.
+create table if not exists public.referral_links (
+  id uuid primary key default gen_random_uuid(),
+  owner_profile_id uuid not null references public.profiles(id) on delete cascade,
+  token_hash text not null unique,
+  status text not null default 'active' check(status in ('active','revoked')),
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  unique(owner_profile_id)
+);
+
+-- A referral earns credit only when the referred person completes a valid comparison.
+-- Do not reward raw scans, page views, duplicate users, self-referrals, or abandoned assessments.
+create table if not exists public.referral_conversions (
+  id uuid primary key default gen_random_uuid(),
+  referral_link_id uuid not null references public.referral_links(id) on delete cascade,
+  referrer_user_id uuid not null references auth.users(id) on delete cascade,
+  referred_user_id uuid references auth.users(id) on delete set null,
+  comparison_id uuid references public.comparisons(id) on delete set null,
+  status text not null default 'pending' check(status in ('pending','qualified','rejected','rewarded')),
+  rejection_reason text,
+  qualified_at timestamptz,
+  rewarded_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique(referral_link_id, referred_user_id)
+);
+
+create table if not exists public.referral_rewards (
+  id uuid primary key default gen_random_uuid(),
+  conversion_id uuid not null unique references public.referral_conversions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  reward_months integer not null default 1 check(reward_months = 1),
+  reward_year integer not null,
+  granted_at timestamptz not null default now()
+);
+
 alter table public.profiles enable row level security;
 alter table public.profile_versions enable row level security;
 alter table public.topic_responses enable row level security;
@@ -128,6 +177,10 @@ alter table public.comparisons enable row level security;
 alter table public.agreements enable row level security;
 alter table public.check_ins enable row level security;
 alter table public.creator_methods enable row level security;
+alter table public.entitlements enable row level security;
+alter table public.referral_links enable row level security;
+alter table public.referral_conversions enable row level security;
+alter table public.referral_rewards enable row level security;
 
 create policy "profiles owner access" on public.profiles
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -150,6 +203,23 @@ create policy "creator methods owner access" on public.creator_methods
 create policy "checkins owner access" on public.check_ins
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- Public invite submission should be implemented through narrowly-scoped server functions / Edge Functions,
--- NOT broad anonymous table policies. Token hashes should never be exposed to the browser.
--- Add server-side RPCs for invite lookup, guest submission, comparison reveal, revocation, export, and deletion.
+create policy "entitlements owner read" on public.entitlements
+  for select using (auth.uid() = user_id);
+
+create policy "referral link owner read" on public.referral_links
+  for select using (exists(select 1 from public.profiles p where p.id=owner_profile_id and p.user_id=auth.uid()));
+
+create policy "referral conversion owner read" on public.referral_conversions
+  for select using (auth.uid() = referrer_user_id);
+
+create policy "referral reward owner read" on public.referral_rewards
+  for select using (auth.uid() = user_id);
+
+-- Public invite/referral submission and all reward mutation must be implemented through narrowly-scoped
+-- server functions / Edge Functions, NOT broad anonymous table policies. Token hashes must never be exposed.
+-- Reward policy: 1 qualified completed comparison = 1 month of Plus, maximum 6 referral months in a rolling
+-- 12-month period per user. Enforce that limit transactionally server-side before granting entitlement time.
+-- Add abuse checks for self-referrals, duplicate identities, repeated device/payment signals where lawful,
+-- impossible-speed completions, and revoked links. Do not collect invasive fingerprinting just to police rewards.
+-- Add server-side RPCs for invite lookup, guest submission, comparison reveal, referral qualification,
+-- reward grant, revocation, export, and deletion.
