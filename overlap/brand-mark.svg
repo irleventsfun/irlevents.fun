@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 84" role="img" aria-labelledby="title desc">
+  <title id="title">The Overlap mark</title>
+  <desc id="desc">Two rounded circles overlap to create a shared center space.</desc>
+  <circle cx="48" cy="42" r="34" fill="#F0D766"/>
+  <circle cx="80" cy="42" r="34" fill="#8C75D6" fill-opacity=".86" style="mix-blend-mode:multiply"/>
+  <path d="M64 12.1A34 34 0 0 0 64 71.9 34 34 0 0 0 64 12.1Z" fill="#5F4A9B" fill-opacity=".68"/>
+</svg>
